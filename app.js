@@ -2,16 +2,17 @@ const express = require('express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 const mysql = require('mysql');
-const fs = require('fs');
-const path = require('path');
-const multer = require('multer');
+const jwt = require('jsonwebtoken');
 
+const cors = require('cors');
 const app = express();
 const port = 3000;
 
 require('dotenv').config();
 
-app.use(express.json());
+app.use(express.json({limit: '50mb'}));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(cors());
 
 const connection = mysql.createConnection({
     host: process.env.DB_HOST,
@@ -51,18 +52,23 @@ app.get('/', (req, res) => {
     res.send('Hello World!')
 });
 
-app.get('/login', (req, res) => {
-    const { username, password } = req.query;
-    const sql = 'call verificarUsuario(?, ?, @estado)';
+app.post('/login', (req, res) => {
+    const { username, password } = req.body;
+    const sql = 'call verificarUsuario(?, ?, @estado, @rolUsuario)';
     connection.query(sql, [username, password], (err, result) => {
         if (err) {
             return res.status(500).json({ message: 'An error occurred while getting the user' });
         }
-        connection.query('select @estado as estado', (err, result) => {
+        connection.query('select @estado as estado, @rolUsuario as rol', (err, result) => {
             if (err) {
                 return res.status(500).json({ message: 'An error occurred while getting the user' });
             } else {
-                res.status(200).json(result[0]);
+                if (!result[0].estado) {
+                    return res.status(401).json({ message: 'User not found' });
+                } else {
+                    const token = jwt.sign({ username }, process.env.JWT_SECRET, { expiresIn: '1h' });
+                    res.status(200).json({rol: result[0].rol, token});
+                }
             }
         });
     });
@@ -92,14 +98,52 @@ app.get('/obtenerTiposB', (req, res) => {
 });
 
 app.post('/subirImagen', (req, res) => {
-    const { tipoImagen, idUsuario, imagen } = req.body;
+    const { tipImagen, usuarioName, imagen } = req.body;
+    const sql = 'call cargarImagen(?, ?, ?)';
+    connection.query(sql, [usuarioName, imagen, tipImagen], (err, result) => {
+        if (err) {
+            console.log(err);
+            return res.status(500).json({ message: 'An error occurred while uploading the image' });
+        }
+        res.status(201).json({ message: 'Image uploaded' });
+    });
 
-    const folder = path.join('C:/Users/Seito/Documents/Universidad/Semillero', 'Imagenes');
+});
 
-    if (!fs.existsSync(folder)) {
-        fs.mkdirSync(folder);
-    }
+app.get('/obtenerInfoImages', (req, res) => {
+    const sql = 'call obtenerInfoImagenes()';
+    connection.query(sql, (err, result) => {
+        if (err) {
+            return res.status(500).json({ message: 'An error occurred while getting the images' });
+        }
+        res.status(200).json(
+            result[0]
+        );
+    });
+});
 
+app.post('/cambiarTipoImagen', (req, res) => {
+    const { idImagen, tipoImagen } = req.body;
+
+    const sql = 'call cambiarTipoImagen(?, ?)';
+    connection.query(sql, [idImagen, tipoImagen], (err, result) => {
+        if (err) {
+            return res.status(500).json({ message: 'An error occurred while changing the image type' });
+        }
+        res.status(201).json({ message: 'Image type changed' });
+    });
+});
+
+app.post('/validarImagen', (req, res) => {
+    const { idImagen } = req.body;
+
+    const sql = 'call validarImagen(?)';
+    connection.query(sql, [idImagen], (err, result) => {
+        if (err) {
+            return res.status(500).json({ message: 'An error occurred while validating the image' });
+        }
+        res.status(201).json({ message: 'Image validated' });
+    });
 });
 
 app.listen(port, () => {
